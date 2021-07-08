@@ -3,7 +3,7 @@
 
 // ----------------- delays
 #define DELAY 5
-#define PRINT_TIMEOUT (5 * 60 * 1000l)
+#define DEFAULT_HEARTBEAT (5 * 60 * 1000l)
 
 #ifndef SERIAL_SPEED
 #warning "SERIAL_SPEED not defined"
@@ -25,7 +25,7 @@
 #define BATTERY_PIN PIN_A0 // A0 as yellow led
 #define OVERLOAD_PIN 4     // D4 as red led
 
-const int inputPins[] = {POWER_PIN, BATTERY_PIN, OVERLOAD_PIN};
+const static int inputPins[] = {POWER_PIN, BATTERY_PIN, OVERLOAD_PIN};
 
 // STATUS
 #define FRONT_FLAG 0x2
@@ -50,8 +50,9 @@ int states[NB_STATE];
 int statePointer;
 unsigned long lastMillis;
 bool hasToPrint;
+unsigned long heartbeat = DEFAULT_HEARTBEAT;
 
-const char *VALUES_STR[] = {
+const static char *VALUES_STR[] = {
     // status
     "OFF",  // already off
     "ON",   // already on
@@ -59,15 +60,41 @@ const char *VALUES_STR[] = {
     "UP"    // just change to on
 };
 
-#define PPCAT(a, b) a##b
-#define JSON_BEGIN Serial.print("{\"sensor\":\"Fortress 900 v2\",")
-#define JSON_OBJ(o) Serial.print(#o ":{")
-#define JSON_KV(k, v) Serial.print(#k ":");Serial.print("\"");Serial.print(v);Serial.print("\"")
-#define JSON_Kv(k, v) Serial.print(#k ":");Serial.print(v)
-#define JSON_COMMA Serial.print(",")
-#define JSON_ENDOBJ Serial.print("}")
-#define JSON_END Serial.println("}")
-#define JSON_RESULT(v) Serial.println("{\"sensor\":\"Fortress 900 v2\",\"RESULT\":" #v "}")
+#define DEFAULT_SENSOR "Fortress 900 v2"
+String sensor = DEFAULT_SENSOR;
+
+void jsonResult(const String result,const bool help=false){
+  Serial.print(F("{\"sensor\":\""));
+  Serial.print(sensor);
+  Serial.print(F("\",\"result\":\""));
+  Serial.print(result);
+  Serial.print(F("\""));
+  if(help){
+    Serial.print(F(",\"help\":{\"commands\":["
+    "{\"cmnd\":\"status\"},"
+    "{\"cmnd\":\"set\",\"parameters\":{"
+    "\"sensor\":\"Fortress\","
+    "\"heartbeat\":10000"
+    "}}]}"));
+  }
+  Serial.println(F("}"));
+}
+
+void jsonStatus(unsigned long currentMillis){
+  Serial.print(F("{\"sensor\":\""));
+  Serial.print(sensor);
+  Serial.print(F("\",\"status\":{\"power\":\""));
+  Serial.print(VALUES_STR[states[STATE_POWER]]);
+  Serial.print(F("\",\"battery\":\""));
+  Serial.print(VALUES_STR[states[STATE_BATTERY]]);
+  Serial.print(F("\",\"overload\":\""));
+  Serial.print(VALUES_STR[states[STATE_OVERLOAD]]);
+  Serial.print(F("},\"time\":"));
+  Serial.print(currentMillis);
+  Serial.print(F(",\"heartbeat\":"));
+  Serial.print(heartbeat);
+  Serial.println(F("}"));
+}
 
 void setup()
 {
@@ -76,8 +103,12 @@ void setup()
   {
     for (int s = 0; s < NB_STATE; s++)
     {
-      statesHisto[h][s] = OFF;
+      statesHisto[h][s] = ON;
     }
+  }
+  for (int s = 0; s < NB_STATE; s++)
+  {
+    states[s] = ON;
   }
   statePointer = 0;
   lastMillis = 0;
@@ -102,7 +133,7 @@ void setup()
   pinMode(VCC, OUTPUT);
   digitalWrite(VCC, HIGH);
 
-  JSON_RESULT("setup complete");
+  jsonResult(F("setup complete"));
 }
 
 void loop()
@@ -141,8 +172,6 @@ void loop()
 
   if (Serial.available())
   {
-    // Serial.println("read...");
-    // String str=Serial.readString();
     StaticJsonDocument<128> doc;
     DeserializationError err = deserializeJson(doc, Serial);
     if (!err)
@@ -151,16 +180,35 @@ void loop()
       if (strcmp(cmnd, "status") == 0)
       {
         hasToPrint = true;
-        JSON_RESULT("OK");
+        jsonResult(F("OK"));
+      }
+      else if (strcmp(cmnd, "set") == 0)
+      {
+        const char * inSensor = doc["parameters"]["sensor"] | "NONE";
+        bool notSensor = strcmp(inSensor, "NONE") == 0;
+        const unsigned long inHeartbeat = doc["parameters"]["heartbeat"] | 0l;
+        bool notHeartbeat = inHeartbeat == 0l;
+        if(notHeartbeat && notSensor){
+          jsonResult(F("Incorrect parameters"), true);
+        } else {
+          jsonResult(F("OK"));
+          if(!notHeartbeat){
+            heartbeat = inHeartbeat;
+          }
+          if(!notSensor){
+            sensor = String(inSensor);
+          }
+          hasToPrint = true;
+        }
       }
       else
       {
-        JSON_RESULT("Unknown command");
+        jsonResult(F("Unknown command"), true);
       }
     }
     else
     {
-      JSON_RESULT("Bad syntax");
+      jsonResult(F("Bad syntax"), true);
     }
   }
 
@@ -168,26 +216,16 @@ void loop()
   {
     lastMillis = currentMillis;
   }
-  else if (currentMillis - lastMillis > PRINT_TIMEOUT)
+  else if (currentMillis - lastMillis > heartbeat)
   {
-    lastMillis += PRINT_TIMEOUT;
+    lastMillis += heartbeat;
     hasToPrint = true;
   }
 
   // serial output (JSON) if there is any change or PRINT_TIMEOUT
   if (hasToPrint)
   {
-    JSON_BEGIN;
-    JSON_OBJ("status");
-    JSON_KV("power",VALUES_STR[states[STATE_POWER]]);
-    JSON_COMMA;
-    JSON_KV("battery",VALUES_STR[states[STATE_BATTERY]]);
-    JSON_COMMA;
-    JSON_KV("overload",VALUES_STR[states[STATE_OVERLOAD]]);
-    JSON_ENDOBJ;
-    JSON_COMMA;
-    JSON_Kv("time",currentMillis);
-    JSON_END;
+    jsonStatus(currentMillis);
   }
 
   delay(DELAY);
