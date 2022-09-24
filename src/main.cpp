@@ -89,7 +89,7 @@ void jsonStatus(unsigned long currentMillis){
   Serial.print(VALUES_STR[states[STATE_BATTERY]]);
   Serial.print(F("\",\"overload\":\""));
   Serial.print(VALUES_STR[states[STATE_OVERLOAD]]);
-  Serial.print(F("},\"time\":"));
+  Serial.print(F("\"},\"time\":"));
   Serial.print(currentMillis);
   Serial.print(F(",\"heartbeat\":"));
   Serial.print(heartbeat);
